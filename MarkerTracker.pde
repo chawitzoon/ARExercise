@@ -65,6 +65,24 @@ class MarkerTracker {
         println("Finished");
     }
 
+    // A function to check if a contour is a good candidate
+    boolean checkContourCondition(MatOfPoint2f approxCurve, Mat image_bgr, int kNumOfCorners) {
+        // Get a bounding rectangle of the approximated contour
+        Rect bounding_rectangle = Imgproc.boundingRect(new MatOfPoint(approxCurve.toArray()));
+        double marker_size = bounding_rectangle.area();
+
+        // Filter bad contours
+        int kImageSize = image_bgr.rows() * image_bgr.cols();
+        double kMarkerSizeMin = kImageSize * 0.01;
+        double kMarkerSizeMax = kImageSize * 0.99;
+        boolean is_contour_valid = (marker_size > kMarkerSizeMin) 
+            && (marker_size < kMarkerSizeMax)
+            && approxCurve.size().height == kNumOfCorners
+            && Imgproc.isContourConvex(new MatOfPoint(approxCurve.toArray()));
+
+        return is_contour_valid;
+    }
+
 	void findMarker(ArrayList<Marker> markers) {
         boolean isFirstStripe = true;
         boolean isFirstMarker = true;
@@ -89,6 +107,9 @@ class MarkerTracker {
         // opencv.toPImage(image_gray, dst);
         // image(dst, 0, 0);
 
+        // add for the first exercise - extract contours and find points along the rough contours
+        // **************************************************************
+
         // contour detection (exercise part)
         image_gray_filtered = OpenCV.imitate(opencv.getGray()); //??add by myself
         Imgproc.threshold(image_gray, image_gray_filtered, thresh, 255, Imgproc.THRESH_BINARY);
@@ -110,74 +131,130 @@ class MarkerTracker {
         //For conversion later on
         MatOfPoint2f approxCurve = new MatOfPoint2f();
         kNumOfCorners = 4;
-        Scalar dot_color = new Scalar(0, 255, 0); //0.8 is transparency
 
         // for each contour found
         for (int i = 0; i < contours.size(); i++) {
             //Convert contours from MatOfPoint to MatOfPoint2f
             MatOfPoint2f contour2f = new MatOfPoint2f(contours.get(i).toArray());
             //Processing on mMOP2f1 which is in type MatOfPoint2f
-            double approxDistance = Imgproc.arcLength(contour2f, true) * 0.02; //epsilon in the commented code
+            double approxDistance = Imgproc.arcLength(contour2f, true) * 0.02; //kEpsilon in the commented code
+            //double kEpsilon = 0.02 * Imgproc.arcLength(new MatOfPoint2f(contour.toArray()), true);
 
             if (approxDistance > 1) {
                 //Find Polygons
                 Imgproc.approxPolyDP(contour2f, approxCurve, approxDistance, true);
+
+                // this part is self code, but will try to use the provided code
+                // **************************************************************
+
+                // //Convert back to MatOfPoint
+                // MatOfPoint points = new MatOfPoint(approxCurve.toArray());
+
+                // Scalar dot_color = new Scalar(0, 255, 0); //0.8 is transparency
+
+                // //Rectangle Checks - Points, area, convexity
+                // if (points.total() == kNumOfCorners && Math.abs(Imgproc.contourArea(points)) > kMarkerSizeLength && Imgproc.isContourConvex(points)){
+                //     // print(i);
+                //     // println(points.size());
+                //     Point[] points_array = points.toArray();
+                //     // println(x.length); //4
+                //     for (int j = 0; j < points_array.length; j++){
+                //         float x = (float) points_array[j].x;
+                //         float y = (float) points_array[j].y;
+                //         circle(x, y, 10); //x(j) = (int x, int y) // this circle() is Processing function
+                //         println("here");
+                //         for (int k = j+1; k < points_array.length; k++){
+                //             if ((k - j == 1) || (k - j == 3)){
+                //                 float x_2 = (float) points_array[k].x;
+                //                 float y_2 = (float) points_array[k].y;
+                //                 line(x, y, x_2, y_2); //line(x1, y1, x2, y2)
+                //                 for (int l = 1; l < 7; l++){
+                //                     circle(((7-l)*x + l*x_2)/7, ((7-l)*y + l*y_2)/7, 5);
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                // **************************************************************
+                
                 //Convert back to MatOfPoint
                 MatOfPoint points = new MatOfPoint(approxCurve.toArray());
-                //Rectangle Checks - Points, area, convexity
-                if (points.total() == kNumOfCorners && Math.abs(Imgproc.contourArea(points)) > kMarkerSizeLength && Imgproc.isContourConvex(points)){
-                    // print(i);
-                    // println(points.size());
-                    Point[] points_array = points.toArray();
-                    // println(x.length); //4
-                    for (int j = 0; j < points_array.length; j++){
-                        float x = (float) points_array[j].x;
-                        float y = (float) points_array[j].y;
-                        circle(x, y, 10); //x(j) = (int x, int y) // this circle() is Processing function
-                        println("here");
-                        for (int k = j+1; k < points_array.length; k++){
-                            if ((k - j == 1) || (k - j == 3)){
-                                float x_2 = (float) points_array[k].x;
-                                float y_2 = (float) points_array[k].y;
-                                line(x, y, x_2, y_2); //line(x1, y1, x2, y2)
-                                for (int l = 1; l < 7; l++){
-                                    circle(((7-l)*x + l*x_2)/7, ((7-l)*y + l*y_2)/7, 5);
-                                }
-                            }
-                        }
+                // put as Rect class
+                Rect kRectangle = Imgproc.boundingRect(points);
+                double kMarkerSize = kRectangle.area();
+
+                //check the condition of detected contours, function written above
+                boolean is_valid = checkContourCondition(approxCurve, image_bgr, kNumOfCorners);
+
+                if (!is_valid)
+                    continue;
+
+                if (MARKER_TRACKER_DEBUG) {
+                    // Draw lines
+                    noFill();
+                    strokeWeight(4);
+                    stroke(random(255), random(255), random(255));
+
+                    beginShape();
+                    Point[] p = approxCurve.toArray();
+                    for (int j = 0; j < p.length; j++) {
+                        vertex((float)p[j].x, (float)p[j].y);
                     }
+                    endShape(CLOSE);
                 }
 
-            }
+                Mat[] line_parameters = new Mat[4];
+
+                for (int k = 0; k < kNumOfCorners; k++) {
+                    int kNumOfEdgePoints = 7;
+
+                    if (MARKER_TRACKER_DEBUG) {
+                        // Draw corner points
+                        float kCircleSize = 10;
+                        fill(0, 255, 0);
+                        noStroke();
+                        Point[] p = approxCurve.toArray();
+                        circle((float)p[k].x, (float)p[k].y, kCircleSize);
+                    }
+
+                    Point[] approx_points = approxCurve.toArray();
+                    PVector pa = OpenCV.pointToPVector(approx_points[(k+1) % kNumOfCorners]);
+                    PVector pb = OpenCV.pointToPVector(approx_points[k]);
+                    PVector kEdgeDirectionVec = PVector.div(PVector.sub(pa, pb), kNumOfEdgePoints);
+                    float kEdgeDirectionVecNorm = kEdgeDirectionVec.mag();
+
+                    int stripe_length = (int)(0.8 * kEdgeDirectionVecNorm);
+                    if (stripe_length < 5)
+                        stripe_length = 5;
+
+                    stripe_length |= 1;
+
+                    int kStop = stripe_length >> 1;
+                    int kStart = -kStop;
+
+                    int kStripeWidth = 3;
+                    Size kStripeSize = new Size(kStripeWidth, stripe_length);
+
+                    PVector kStripeVecX = PVector.div(kEdgeDirectionVec, kEdgeDirectionVecNorm);
+                    PVector kStripeVecY = new PVector(-kStripeVecX.y, kStripeVecX.x);
+
+                    Mat stripe_image = new Mat(kStripeSize, CvType.CV_8UC1);
+
+                    // Array for edge point centers
+                    PVector[] edge_points = new PVector[kNumOfEdgePoints - 1];
+
+                    for (int j = 1; j < kNumOfEdgePoints; j++) {
+                        PVector edge_point = PVector.add(pb, PVector.mult(kEdgeDirectionVec, j));
+
+                        if (MARKER_TRACKER_DEBUG) {
+                            // Draw line delimeters
+                            fill(0, 0, 255);
+                            noStroke();
+                            circle(edge_point.x, edge_point.y, 4);
+                        }
+                    } // --- end of loop over edge points of one edge
+                }
+            } // end of loop over contour candidates
         }
-        // for (MatOfPoint contour: contours) {
-            
-        //     MatOfPoint2f contour_approx = new MatOfPoint2f();
-        //     double kEpsilon = 0.05 * Imgproc.arcLength(new MatOfPoint2f(contour.toArray()),true);
-
-        //     Imgproc.approxPolyDP(new MatOfPoint2f(contour.toArray()), contour_approx,kEpsilon,true);
-
-        //     //check size
-        //     Rect bounding_rectangle = Imgproc.boundingRect(new MatOfPoint(contour_approx.toArray()));
-        //     double marker_size = bounding_rectangle.area();
-        //     boolean is_contour_valid = (marker_size > kMarkerSizeLength)&&
-        //     // (marker_size < kMarkerSizeMax)&&
-        //     (contour_approx.size().height == kNumOfCorners)&&
-        //     (Imgproc.isContourConvex(new MatOfPoint(contour_approx.toArray())));
-
-        //     print(bounding_rectangle);
-        //     println(is_contour_valid);
-        //     if(is_contour_valid = false) {  //<-- continue leaks.. why?
-        //         continue;
-        //     }
-            // Point[] p = contour_approx.toArray();
-            // for (int i = 0; i < p.length; i++){
-            //     println(i);
-            //     circle(4,5,20);
-            //     // circle((float)p[i].x, (float)p[i].y), (float)5);
-            // }
-            // ...
-            
-        // }
     }
 }
