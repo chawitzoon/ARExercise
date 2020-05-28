@@ -83,6 +83,28 @@ class MarkerTracker {
         return is_contour_valid;
     }
 
+    // obtain the value of sampled points (from gray_img) in a stripe
+    int subpixSampleSafe(Mat pSrc, PVector p) {
+        int x = (int)(floor(p.x));
+        int y = (int)(floor(p.y));
+
+        if (x < 0 || x >= pSrc.cols() - 1 || y < 0 || y >= pSrc.rows() - 1)
+            return 127;
+
+        int dx = (int)(256 * (p.x - floor(p.x)));
+        int dy = (int)(256 * (p.y - floor(p.y)));
+
+        int i   = (int)(pSrc.get(y,   x  )[0]);
+        int ix  = (int)(pSrc.get(y,   x+1)[0]);
+        int iy  = (int)(pSrc.get(y+1, x  )[0]);
+        int ixy = (int)(pSrc.get(y+1, x+1)[0]);
+
+        int a = i  + ((dx * (ix  - i )) >> 8);
+        int b = iy + ((dx * (ixy - iy)) >> 8);
+
+        return a + ((dy * (b - a)) >> 8);
+    }
+
 	void findMarker(ArrayList<Marker> markers) {
         boolean isFirstStripe = true;
         boolean isFirstMarker = true;
@@ -103,9 +125,10 @@ class MarkerTracker {
         image_gray = OpenCV.imitate(opencv.getGray());
         opencv.getGray().copyTo(image_gray);
 
-        // PImage dst = createImage(image_width, image_height, ARGB);
-        // opencv.toPImage(image_gray, dst);
+        // PImage dst = createImage(image_width, image_height, 1);
+        // opencv.toPImage(image_gray_filtered, dst);
         // image(dst, 0, 0);
+
 
         // add for the first exercise - extract contours and find points along the rough contours
         // **************************************************************
@@ -113,10 +136,6 @@ class MarkerTracker {
         // contour detection (exercise part)
         image_gray_filtered = OpenCV.imitate(opencv.getGray()); //??add by myself
         Imgproc.threshold(image_gray, image_gray_filtered, thresh, 255, Imgproc.THRESH_BINARY);
-
-        // PImage dst = createImage(image_width, image_height, 1);
-        // opencv.toPImage(image_gray_filtered, dst);
-        // image(dst, 0, 0);
 
         // find contours
         Imgproc.findContours(image_gray_filtered, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
@@ -205,6 +224,7 @@ class MarkerTracker {
 
                 Mat[] line_parameters = new Mat[4];
 
+                // loop for each edge
                 for (int k = 0; k < kNumOfCorners; k++) {
                     int kNumOfEdgePoints = 7;
 
@@ -242,7 +262,8 @@ class MarkerTracker {
 
                     // Array for edge point centers
                     PVector[] edge_points = new PVector[kNumOfEdgePoints - 1];
-
+                    
+                    // loop for each point in an edge
                     for (int j = 1; j < kNumOfEdgePoints; j++) {
                         PVector edge_point = PVector.add(pb, PVector.mult(kEdgeDirectionVec, j));
 
@@ -252,9 +273,102 @@ class MarkerTracker {
                             noStroke();
                             circle(edge_point.x, edge_point.y, 4);
                         }
+                        // exercise 2 - find exact edge points
+                        // **************************************************************
+                        // draw strips
+                        for (int m = -1; m <= 1; m++) {
+                            for (int n = kStart; n <= kStop; n++) {
+                                PVector subpixel = PVector.add(
+                                    PVector.add(edge_point, PVector.mult(kStripeVecX, m)), // strip width only 3 (-1,0,1)
+                                    PVector.mult(kStripeVecY, n) //strip lenght (n, -kstart to kstart)
+                                );
+
+                                if (MARKER_TRACKER_DEBUG) {
+                                    noStroke();
+                                    if (isFirstStripe) {
+                                        fill(255, 0, 255);
+                                        circle(subpixel.x, subpixel.y, 2);
+                                    } else {
+                                        fill(0, 255, 255);
+                                        circle(subpixel.x, subpixel.y, 2);
+                                    }
+                                }
+
+                                // Fetch subpixel value
+                                int kSubpixelValue = subpixSampleSafe(image_gray, subpixel);
+                                int kStripeX = m + 1; // update kStripeX for next dot
+                                int kStripeY = n + (stripe_length >> 1); // update kStripeY for next dot
+                                stripe_image.put(kStripeY, kStripeX, kSubpixelValue); // store in matrix stripe_image
+                            }
+                        }
+
+                        // use sobel operator on stripe
+                        // ( -1 , -2, -1 )
+                        // (  0 ,  0,  0 )
+                        // (  1 ,  2,  1 )
+
+                        double[] sobelValues = new double[stripe_length - 2];
+                    
+                        for (int n = 1; n < stripe_length - 1; n++) {
+                            byte[] p = new byte[3];
+
+                            stripe_image.get(n - 1, 0, p);
+                            double r1 = -(p[0] & 0xFF) - 2.0 * (p[1] & 0xFF) - (p[2] & 0xFF); // 0xFF is masking
+
+                            stripe_image.get(n + 1, 0, p);
+                            double r3 =  (p[0] & 0xFF) + 2.0 * (p[1] & 0xFF) + (p[2] & 0xFF);
+
+                            sobelValues[n - 1] = -(r1 + r3);
+                        }
+
+                        double maxVal = -1;
+                        int maxIndex = 0;
+                        for (int n = 0; n < stripe_length - 2; n++) {
+                            if (sobelValues[n] > maxVal) {
+                                maxVal = sobelValues[n];
+                                maxIndex = n;
+                            }
+                        }
+
+                        double y0, y1, y2;
+                        y0 = (maxIndex <= 0) ? 0 : sobelValues[maxIndex - 1];
+                        y1 = sobelValues[maxIndex];
+                        y2 = (maxIndex >= stripe_length - 3) ? 0 : sobelValues[maxIndex + 1];
+
+                        // formula for calculating the x-coordinate of the vertex of a parabola,
+                        // given 3 points with equal distances
+                        // (xv means the x value of the vertex, d the distance between the points):
+                        // xv = x1 + (d / 2) * (y2 - y0)/(2*y1 - y0 - y2)
+                        double pos = (y2 - y0) / (4 * y1 - 2 * y0 - 2 * y2);
+
+                        // exact point with subpixel accuracy
+                        int maxIndexShift = maxIndex - (stripe_length >> 1); // ???
+                        PVector edgeCenter = PVector.add(edge_point, PVector.mult(kStripeVecY, maxIndexShift + (float)pos));
+
+                        if (MARKER_TRACKER_DEBUG) {
+                            fill(0, 0, 255);
+                            noStroke();
+                            circle(edgeCenter.x, edgeCenter.y, 4);
+                        }
+                        edge_points[j - 1] = new PVector(edgeCenter.x, edgeCenter.y);
+
+                        if (isFirstStripe) {
+                            if (MARKER_TRACKER_DEBUG) {
+                                // TODO: move stripe_image to another window
+                                PImage dst_stripe = createImage(100, 300, ARGB);
+                                Mat iplTmp = new Mat(new Size(100, 300), CvType.CV_8UC1);
+                                Imgproc.resize(stripe_image, iplTmp, new Size(100, 300), 0.0, 0.0, Imgproc.INTER_NEAREST);
+                                opencv.toPImage(iplTmp, dst_stripe);
+                                image(dst_stripe, 0, 0);
+                            }
+                            isFirstStripe = false;
+                        }
+                        // **************************************************************
+
                     } // --- end of loop over edge points of one edge
                 }
             } // end of loop over contour candidates
         }
+        // **************************************************************
     }
 }
